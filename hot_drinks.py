@@ -39,8 +39,9 @@ class HotDrinks():
         self.power = False
         self.binary = False
 
-    def setNames(self, idToName):
+    def initIDs(self, bridge_id, idToName):
         self.idToName = idToName
+        self.bridge_id = bridge_id
 
     def onChange(self, sensor, timeStamp, value):
         try:
@@ -56,7 +57,7 @@ class HotDrinks():
                         self.client.send(msg)
                         self.cbLog("debug", "msg send to client: " + str(json.dumps(msg, indent=4)))
                     values = {
-                        "name": self.bridge_id + "/hot_drinks/" + sensor,
+                        "name": self.bridge_id + "/hot_drinks",
                         "points": [[int(timeStamp*1000), 1]]
                     }
                     self.storeValues(values)
@@ -129,7 +130,7 @@ class App(CbApp):
                     newConfig = message["config"]
                     copyConfig = config.copy()
                     copyConfig.update(newConfig)
-                    if copyConfig != config:
+                    if copyConfig != config or not os.path.isfile(CONFIG_FILE):
                         self.cbLog("debug", "onClientMessage. Updating config from client message")
                         config = copyConfig.copy()
                         with open(CONFIG_FILE, 'w') as f:
@@ -149,7 +150,7 @@ class App(CbApp):
 
     def onAdaptorData(self, message):
         #self.cbLog("debug", "onAdaptorData, message: " + str(json.dumps(message, indent=4)))
-        if message["characteristic"] == "binary_sensor":
+        if message["characteristic"] == "binary_sensor" or message["characteristic"] == "power":
             self.hotDrinks.onChange(message["id"], message["timeStamp"], message["data"])
 
     def onAdaptorService(self, message):
@@ -201,13 +202,15 @@ class App(CbApp):
                 idToName2[adtID] = friendly_name
                 self.idToName[adtID] = friendly_name.replace(" ", "_")
                 self.devices.append(adtID)
-        self.client = CbClient(self.id, CID, 5)
+        self.client = CbClient(self.id, CID, 50)
         self.client.onClientMessage = self.onClientMessage
         self.client.sendMessage = self.sendMessage
         self.client.cbLog = self.cbLog
+        self.client.loadSaved()
         self.hotDrinks.cbLog = self.cbLog
         self.hotDrinks.client = self.client
-        self.hotDrinks.setNames(idToName2)
+        self.client.loadSaved()
+        self.hotDrinks.initIDs(self.bridge_id, self.idToName)
         self.setState("starting")
 
 if __name__ == '__main__':
