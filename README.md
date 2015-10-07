@@ -3,7 +3,7 @@ App to detect the making of hot drinks and report, AID29
 --------------------------------------------------------
 This app has the following configuration (default values):
 
-config = {
+{
     "hot_drinks": true,
     "name": "A Human Being",
     "alert": false,
