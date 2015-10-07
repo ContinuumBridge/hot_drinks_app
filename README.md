@@ -3,15 +3,15 @@ App to detect the making of hot drinks and report, AID29
 --------------------------------------------------------
 This app has the following configuration (default values):
 
-{
-    "hot_drinks": true,
-    "name": "A Human Being",
-    "alert": false,
-    "ignore_time": 120,
-    "window": 360,
-    "threshold": 10,
-    "data_send_delay": 1
-}
+    {
+        "hot_drinks": true,
+        "name": "A Human Being",
+        "alert": false,
+        "ignore_time": 120,
+        "window": 360,
+        "threshold": 10,
+        "data_send_delay": 1
+    }
 
 The fields have the following use:
 
