@@ -1,9 +1,9 @@
 {
     "exe": "hot_drinks.py", 
     "description": "An app to check and report on the making of hot drinks", 
-    "url": "https://github.com/ContinuumBridge/hot_drinks_app/archive/v1.3.0.tar.gz", 
+    "url": "https://github.com/ContinuumBridge/hot_drinks_app/archive/v1.4.0.tar.gz", 
     "app_resource": "/api/bridge/v1/app/29", 
-    "version": "1.3.0", 
+    "version": "1.4.0", 
     "provider": "ContinuumBridge", 
     "name": "Hot Drinks"
 }

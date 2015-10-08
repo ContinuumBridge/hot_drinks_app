@@ -7,8 +7,10 @@
 # Default values:
 config = {
     "hot_drinks": True,
-    "alert": False,
+    "name": "A Human Being",
+    "alert": True,
     "ignore_time": 120,
+    "window": 360,
     "threshold": 10,
     "data_send_delay": 1
 }
@@ -18,53 +20,156 @@ import os.path
 import time
 from cbcommslib import CbApp, CbClient
 from cbconfig import *
-from cbutils import nicetime
 import requests
 import json
 from twisted.internet import reactor
 import smtplib
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
+from cbutils import nicetime
+#from cbutils import timeCorrect
+# Can be removed after all bridges are at a version that supports timeCorrect()
+def timeCorrect():
+    if time.time() < 32000000:
+        return False
+    else:
+        return True
 
 CONFIG_FILE                       = CB_CONFIG_DIR + "hot_drinks.config"
+STATE_FILE                        = CB_CONFIG_DIR + "hot_drinks.state"
 CID                               = "CID164"  # Client ID
 
 class HotDrinks():
     def __init__(self):
         self.bridge_id = "unconfigured"
-        self.on = False
-        self.offTime = 0
+        self.kettleOn = False
+        self.kettleOffTime = 0
         self.s = []
         self.waiting = False
-        self.power = False
-        self.binary = False
+        self.triggered = False
+        self.power = None
+        self.binary = []
+        self.sensorOnTimes = {}
+        self.counts = {
+            "drinksInDay": 0,
+            "kettlesInDay": 0
+        }
 
     def initIDs(self, bridge_id, idToName):
         self.idToName = idToName
         self.bridge_id = bridge_id
+        self.startMonitor()
+
+    def addSensor(self, characteristic, sensorID):
+        if characteristic == "power":
+            self.power = sensorID
+        elif characteristic == "binary":
+            self.binary.append(sensorID)
+        self.sensorOnTimes[sensorID] = 0
+        self.cbLog("debug", "addSensor, sensorOnTimes: " + str(self.sensorOnTimes))
+
+    def monitor(self):
+        try:
+            values = {
+                "name": self.bridge_id + "/hot_drinks_in_day",
+                "points": [[int(now*1000), self.counts["drinksInDay"]]]
+            }
+            self.storeValues(values)
+            values = {
+                "name": self.bridge_id + "/kettles_in_day",
+                "points": [[int(now*1000), self.counts["kettlesInDay"]]]
+            }
+            self.storeValues(values)
+            self.counts["drinksInDay"] = 0
+            self.counts["kettlesInDay"] = 0
+            self.startMonitor()
+        except Exception as ex:
+            self.cbLog("warning", "monitor failed. Exception. Type: " + str(type(ex)) + "exception: " +  str(ex.args))
+
+    def startMonitor(self):
+        try:
+            if not timeCorrect():
+                reactor.callLater(60, self.startMonitor)
+            now = time.strftime("%Y %b %d %H:%M", time.localtime()).split()
+            now[3] = "00:00"
+            midnight_e = time.mktime(time.strptime(" ".join(now), "%Y %b %d %H:%M")) + 86400
+            wait = midnight_e - time.time() + 60
+            self.cbLog("debug", "monitor set for " + str(int(wait)) + " seconds")
+            reactor.callLater(wait, self.monitor)
+        except Exception as ex:
+            self.cbLog("warning", "startMonitor failed. Exception. Type: " + str(type(ex)) + "exception: " +  str(ex.args))
+
+    def loadMonitor(self):
+        try:
+            if os.path.isfile(STATE_FILE):
+                with open(STATE_FILE, 'r') as f:
+                    self.counts = json.load(f)
+            self.cbLog("debug", "Loaded saved counts: " + str(self.counts))
+        except Exception as ex:
+            self.cbLog("warning", "Problem loading stored counts. Exception. Type: " + str(type(ex)) + "exception: " +  str(ex.args))
+        finally:
+            try:
+                os.remove(STATE_FILE)
+            except Exception as ex:
+                self.cbLog("debug", "Cannot remove stored counts file. Exception. Type: " + str(type(ex)) + "exception: " +  str(ex.args))
+
+    def saveMonitor(self):
+        try:
+            with open(STATE_FILE, 'w') as f:
+                json.dump(self.counts, f)
+                self.cbLog("info", "Saved counts")
+        except Exception as ex:
+            self.cbLog("warning", "Problem saving counts. Type: " + str(type(ex)) + "exception: " +  str(ex.args))
 
     def onChange(self, sensor, timeStamp, value):
         try:
-            #self.cbLog("debug", "onChange. value: " + value + " self.binary: " + str(self.binary) + " config_alert: " + str(config["alert"]))
-            if ((self.power and value > config["threshold"]) or (self.binary and value == "on")) and not self.on:
-                if timeStamp - self.offTime > config["ignore_time"]:
-                    self.on = True
-                    if config["alert"]:
-                        msg = {"m": "alert",
-                               "a": "Hot drinks being made at " + nicetime(timeStamp) + " (by " + self.idToName[sensor] + ")",
-                               "t": timeStamp
-                              }
-                        self.client.send(msg)
-                        self.cbLog("debug", "msg send to client: " + str(json.dumps(msg, indent=4)))
-                    values = {
-                        "name": self.bridge_id + "/hot_drinks",
-                        "points": [[int(timeStamp*1000), 1]]
-                    }
-                    self.storeValues(values)
-            elif ((self.power and value < config["threshold"]) or (self.binary and value == "off"))  and self.on:
-                self.on = False
-                self.offTime = timeStamp
-                self.cbLog("debug", "HotDrinks off")
+            #self.cbLog("debug", "onChange. sensor: " + self.idToName[sensor] + ", value: " + str(value) + ", time: " + nicetime(timeStamp) + ", kettleOn: " + str(self.kettleOn))
+            if not timeCorrect():
+                self.cbLog("info", "Data not processed as time is not correct")
+                return 
+            if sensor == self.power:
+                if value > config["threshold"] and not self.kettleOn:
+                    if timeStamp - self.kettleOffTime > config["ignore_time"]:
+                        self.sensorOnTimes[sensor] = timeStamp
+                        self.kettleOn = True
+                        self.cbLog("debug", "kettle on")
+                        values = {
+                            "name": self.bridge_id + "/kettle",
+                            "points": [[int(timeStamp*1000), 1]]
+                        }
+                        self.storeValues(values)
+                        self.counts["kettlesInDay"] += 1
+                        self.cbLog("debug", "kettlesInDay: " + str(self.counts["kettlesInDay"]))
+                elif value < config["threshold"] and self.kettleOn:
+                    self.kettleOn = False
+                    self.triggered = False
+                    self.kettleOffTime = timeStamp
+                    self.cbLog("debug", "kettle off")
+            elif sensor in self.binary and value == "on":
+                self.sensorOnTimes[sensor] = timeStamp
+            now = time.time()
+            trigger = True
+            #self.cbLog("debug", "onChange, sensorOnTimes: " + str(self.sensorOnTimes))
+            for t in self.sensorOnTimes:
+                if now - self.sensorOnTimes[t] > config["window"]:
+                    trigger = False
+            if trigger and not self.triggered:
+                self.cbLog("debug", "triggered")
+                self.triggered = True
+                self.counts["drinksInDay"] += 1
+                self.cbLog("debug", "drinksInDay: " + str(self.counts["drinksInDay"]))
+                if config["alert"]:
+                    msg = {"m": "alert",
+                           "a": "Hot drinks being made by " + config["name"] + " at " + nicetime(now),
+                           "t": now
+                          }
+                    self.client.send(msg)
+                    self.cbLog("debug", "msg send to client: " + str(json.dumps(msg, indent=4)))
+                values = {
+                    "name": self.bridge_id + "/hot_drinks",
+                    "points": [[int(now*1000), 1]]
+                }
+                self.storeValues(values)
         except Exception as ex:
             self.cbLog("warning", "HotDrinks onChange encountered problems. Exception: " + str(type(ex)) + str(ex.args))
 
@@ -72,7 +177,7 @@ class HotDrinks():
         msg = {"m": "data",
                "d": self.s
                }
-        #self.cbLog("debug", "sendValues. Sending: " + str(json.dumps(msg, indent=4)))
+        self.cbLog("debug", "sendValues. Sending: " + str(json.dumps(msg, indent=4)))
         self.client.send(msg)
         self.s = []
         self.waiting = False
@@ -91,8 +196,6 @@ class App(CbApp):
         self.devices = []
         self.devServices = [] 
         self.idToName = {} 
-        self.entryExitIDs = []
-        self.hotDrinkIDs = []
         self.hotDrinks = HotDrinks()
         #CbApp.__init__ MUST be called
         CbApp.__init__(self, argv)
@@ -106,6 +209,10 @@ class App(CbApp):
                "status": "state",
                "state": self.state}
         self.sendManagerMessage(msg)
+
+    def onStop(self):
+        self.hotDrinks.saveMonitor()
+        self.client.save()
 
     def onConcMessage(self, message):
         #self.cbLog("debug", "onConcMessage, message: " + str(json.dumps(message, indent=4)))
@@ -154,7 +261,7 @@ class App(CbApp):
             self.hotDrinks.onChange(message["id"], message["timeStamp"], message["data"])
 
     def onAdaptorService(self, message):
-        self.cbLog("debug", "onAdaptorService, message: " + str(json.dumps(message, indent=4)))
+        #self.cbLog("debug", "onAdaptorService, message: " + str(json.dumps(message, indent=4)))
         if self.state == "starting":
             self.setState("running")
         self.devServices.append(message)
@@ -164,10 +271,10 @@ class App(CbApp):
         for p in message["service"]:
             if p["characteristic"] == "power":
                 power = True
-                self.hotDrinks.power = True
+                self.hotDrinks.addSensor("power", message["id"])
             elif p["characteristic"] == "binary_sensor":
                 binary = True
-                self.hotDrinks.binary = True
+                self.hotDrinks.addSensor("binary", message["id"])
         if power:
             serviceReq.append({"characteristic": "power", "interval": 0})
         elif binary:
@@ -202,15 +309,15 @@ class App(CbApp):
                 idToName2[adtID] = friendly_name
                 self.idToName[adtID] = friendly_name.replace(" ", "_")
                 self.devices.append(adtID)
-        self.client = CbClient(self.id, CID, 50)
+        self.client = CbClient(self.id, CID, 10)
         self.client.onClientMessage = self.onClientMessage
         self.client.sendMessage = self.sendMessage
         self.client.cbLog = self.cbLog
         self.client.loadSaved()
         self.hotDrinks.cbLog = self.cbLog
         self.hotDrinks.client = self.client
-        self.client.loadSaved()
         self.hotDrinks.initIDs(self.bridge_id, self.idToName)
+        self.hotDrinks.loadMonitor()
         self.setState("starting")
 
 if __name__ == '__main__':
