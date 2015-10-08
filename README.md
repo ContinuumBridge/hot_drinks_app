@@ -35,3 +35,4 @@ The app works as follows:
 * If binary sensors are connected, if the kettle and all the binary sensors are triggered within the window, then a "hot_drink" message will be sent.
 * Once the kettle is turned off, no events will be reported again until after the ignore_time. This is to cater for the fact that some people will let a kettle boil and then reboil it before making a hot drink.
 * If alerts are enabled, depending on the data client settings, emails and texts with the following form of message will be sent: "Hot drinks being made by A Human Being at 15:00:19, 07-10-2015".
+* The app counts how many time the kettle was used and how many hot drinks were used in a 24 hours period, starting at midnight, and reports these as "hot_drinks_in_day" and "kettles_in_day". These counts remain correct through bridge restarts and reboots, but not if the bridge was unplugged.
