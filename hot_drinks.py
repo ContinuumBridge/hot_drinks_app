@@ -12,6 +12,7 @@ config = {
     "ignore_time": 120,
     "window": 360,
     "threshold": 10,
+    "daily_report_time": "02:00",
     "data_send_delay": 1
 }
 
@@ -91,7 +92,7 @@ class HotDrinks():
             if not timeCorrect():
                 reactor.callLater(60, self.startMonitor)
             now = time.strftime("%Y %b %d %H:%M", time.localtime()).split()
-            now[3] = "00:00"
+            now[3] = config["daily_report_time"]
             midnight_e = time.mktime(time.strptime(" ".join(now), "%Y %b %d %H:%M")) + 86400
             wait = midnight_e - time.time() + 60
             self.cbLog("debug", "monitor set for " + str(int(wait)) + " seconds")
